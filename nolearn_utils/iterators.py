@@ -33,8 +33,8 @@ class BaseBatchIterator(object):
         self.verbose = False
         self.shuffle = shuffle
 
-    def __call__(self, X, y=None):
-        self.X, self.y = X, y
+    def __call__(self, X, y=None, X_info=None):
+        self.X, self.y, self.X_info = X, y, X_info
         return self
 
     def __iter__(self):
@@ -54,7 +54,11 @@ class BaseBatchIterator(object):
                 yb = self.y[idx[sl]]
             else:
                 yb = None
-            yield self.transform(Xb, yb)
+            if self.X_info is not None:
+                Xinfob = np.array(self.X_info)[sl]
+            else:
+                Xinfob = None
+            yield self.transform(Xb, yb, Xinfob)
 
     @property
     def n_samples(self):
@@ -64,12 +68,12 @@ class BaseBatchIterator(object):
         else:
             return len(X)
 
-    def transform(self, Xb, yb):
-        return Xb, yb
+    def transform(self, Xb, yb, Xinfob):
+        return Xb, yb, Xinfob
 
     def __getstate__(self):
         state = dict(self.__dict__)
-        for attr in ('X', 'y',):
+        for attr in ('X', 'y', 'Xinfob'):
             if attr in state:
                 del state[attr]
         return state
@@ -82,13 +86,14 @@ class ShuffleBatchIteratorMixin(object):
     Shuffle the order of samples
     """
     def __iter__(self):
-        orig_X, orig_y = self.X, self.y
-        self.X, self.y = shuffle(self.X, self.y)
+        orig_X, orig_y, orig_X_info = self.X, self.y, self.X_info
+
+        self.X, self.y, self.X_info = shuffle_arrays([self.X, self.y, self.X_info])
 
         for res in super(ShuffleBatchIteratorMixin, self).__iter__():
             yield res
 
-        self.X, self.y = orig_X, orig_y
+        self.X, self.y, self.X_info = orig_X, orig_y, orig_X_info
 
 
 class RebalanceBatchIteratorMixin(object):
@@ -241,15 +246,15 @@ class RandomCropBatchIteratorMixin(object):
 
 class RandomFlipBatchIteratorMixin(object):
     """
-    Randomly flip the random horizontally or vertically
+    Randomly flip the image horizontally or vertically
     """
     def __init__(self, flip_horizontal_p=0.5, flip_vertical_p=0.5, *args, **kwargs):
         super(RandomFlipBatchIteratorMixin, self).__init__(*args, **kwargs)
         self.flip_horizontal_p = flip_horizontal_p
         self.flip_vertical_p = flip_vertical_p
 
-    def transform(self, Xb, yb):
-        Xb, yb = super(RandomFlipBatchIteratorMixin, self).transform(Xb, yb)
+    def transform(self, Xb, yb, Xinfob):
+        Xb, yb, Xinfob = super(RandomFlipBatchIteratorMixin, self).transform(Xb, yb, Xinfob)
         Xb_flipped = Xb.copy()
 
         if self.flip_horizontal_p > 0:
@@ -260,7 +265,7 @@ class RandomFlipBatchIteratorMixin(object):
             vertical_flip_idx = get_random_idx(Xb, self.flip_vertical_p)
             Xb_flipped[vertical_flip_idx] = Xb_flipped[vertical_flip_idx, :, ::-1, :]
 
-        return Xb_flipped, yb
+        return Xb_flipped, yb, Xinfob
 
 
 class ReadImageBatchIteratorMixin(object):
@@ -479,9 +484,9 @@ def pmap(func, arr, n_jobs=1, *args, **kwargs):
     return Parallel(n_jobs)(delayed(func)(x, *args, **kwargs) for x in arr)
 
 
-def shuffle(*arrays):
+def shuffle_arrays(arrays):
     p = np.random.permutation(len(arrays[0]))
-    return [array[p] for array in arrays]
+    return [array[p] if array is not None else array for array in arrays]
 
 
 def im_affine_transform(img, scale, rotation, shear, translation_y, translation_x, return_tform=False):
